@@ -184,8 +184,7 @@
                     <div class="stat-icon icon-suhu"><i class="bi bi-thermometer-half"></i></div>
                     <div class="stat-title">Suhu</div>
                 </div>
-                {{-- PERUBAHAN: Tampilan nilai terkini dan canvas untuk grafik --}}
-                <div class="current-value-display"><span id="Suhu-current-value">--</span><span class="unit">°C</span></div>
+                <div class="current-value-display"><span id="Suhu-current-value">Memuat...</span><span class="unit">°C</span></div>
                 <div class="chart-wrapper">
                     <canvas id="suhuChart"></canvas>
                 </div>
@@ -198,8 +197,7 @@
                     <div class="stat-icon icon-ph"><i class="bi bi-droplet-half"></i></div>
                     <div class="stat-title">pH Air</div>
                 </div>
-                {{-- PERUBAHAN: Tampilan nilai terkini dan canvas untuk grafik --}}
-                <div class="current-value-display"><span id="pH-current-value">--</span></div>
+                <div class="current-value-display"><span id="pH-current-value">Memuat...</span></div>
                 <div class="chart-wrapper">
                     <canvas id="phChart"></canvas>
                 </div>
@@ -212,8 +210,7 @@
                     <div class="stat-icon icon-kekeruhan"><i class="bi bi-eye"></i></div>
                     <div class="stat-title">Kekeruhan</div>
                 </div>
-                {{-- PERUBAHAN: Tampilan nilai terkini dan canvas untuk grafik --}}
-                <div class="current-value-display"><span id="Kekeruhan-current-value">--</span><span class="unit">NTU</span></div>
+                <div class="current-value-display"><span id="Kekeruhan-current-value">Memuat...</span><span class="unit">NTU</span></div>
                 <div class="chart-wrapper">
                     <canvas id="kekeruhanChart"></canvas>
                 </div>
@@ -267,7 +264,7 @@
 @endsection
 
 @push('scripts')
-{{-- PERUBAHAN: Import Chart.js dari CDN --}}
+{{-- Import Chart.js dari CDN --}}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <script type="module">
@@ -279,7 +276,10 @@
     const app = initializeApp(firebaseConfig);
     const database = getDatabase(app);
     let previousData = {};
-    const MAX_DATA_POINTS = 20; // Jumlah maksimal data yang ditampilkan di grafik
+    const MAX_DATA_POINTS = 10; // PERUBAHAN: Disesuaikan menjadi 10
+    const LOG_INTERVAL = 30000; // 30 detik
+    let lastLogTime = 0;
+    let latestSensorData = {};
 
     // --- ELEMEN DOM ---
     const statusBadge = document.getElementById('status-badge');
@@ -288,13 +288,35 @@
     const kualitasValue = document.getElementById('Kualitas-value');
     const kualitasDeskripsi = document.getElementById('Kualitas-deskripsi');
 
-    // --- FUNGSI BANTUAN ---
+    // --- FUNGSI UNTUK MENYIMPAN DATA (Tidak berubah) ---
+    async function logDataToDatabase(data) {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        try {
+            const response = await fetch("{{ route('sensor.log.store') }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('Gagal menyimpan data:', errorData.message || 'Error tidak diketahui');
+            } else {
+                const result = await response.json();
+                console.log('Sukses:', result.message);
+            }
+        } catch (error) {
+            console.error('Error jaringan saat mengirim data:', error);
+        }
+    }
+
+    // --- FUNGSI BANTUAN (Tidak berubah) ---
     function flashUpdate(element) {
         element.classList.add('flash-update');
         setTimeout(() => element.classList.remove('flash-update'), 700);
     }
     
     function analisisKualitasAir(suhu, ph, kekeruhan) {
+        // ... (Logika analisis kualitas air tidak berubah)
         const suhuIdeal = { min: 25, max: 30 };
         const phIdeal = { min: 6.0, max: 7.5 };
         const kekeruhanIdeal = { max: 25 };
@@ -307,83 +329,94 @@
         return { status: "Baik", deskripsi: "Semua parameter air dalam kondisi optimal untuk pertumbuhan ikan.", iconClass: 'icon-kualitas-baik', color: '#198754' };
     }
 
-    // --- PERUBAHAN: PENGATURAN DAN INISIALISASI GRAFIK ---
-
-    // Fungsi untuk membuat konfigurasi dasar grafik
+    // --- PENGATURAN DAN INISIALISASI GRAFIK ---
     function createChartConfig(lineColor, areaColor) {
-        return {
-            type: 'line',
-            data: {
-                labels: [], // Label waktu di sumbu X
-                datasets: [{
-                    label: 'Value',
-                    data: [], // Data sensor di sumbu Y
-                    borderColor: lineColor,
-                    backgroundColor: areaColor,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.4, // Membuat garis lebih melengkung
-                    fill: true,
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { enabled: false }
-                },
-                scales: {
-                    x: {
-                        display: false, // Sembunyikan label sumbu X
-                    },
-                    y: {
-                        display: false, // Sembunyikan label sumbu Y
-                    }
-                }
-            }
-        };
+        return { type: 'line', data: { labels: [], datasets: [{ label: 'Value', data: [], borderColor: lineColor, backgroundColor: areaColor, borderWidth: 2, pointRadius: 0, tension: 0.4, fill: true, }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false, }, y: { display: false, } } } };
     }
-
-    // Inisialisasi setiap grafik
-    const suhuChart = new Chart(
-        document.getElementById('suhuChart').getContext('2d'),
-        createChartConfig('rgba(253, 126, 20, 1)', 'rgba(253, 126, 20, 0.2)')
-    );
-    const phChart = new Chart(
-        document.getElementById('phChart').getContext('2d'),
-        createChartConfig('rgba(13, 110, 253, 1)', 'rgba(13, 110, 253, 0.2)')
-    );
-    const kekeruhanChart = new Chart(
-        document.getElementById('kekeruhanChart').getContext('2d'),
-        createChartConfig('rgba(111, 66, 193, 1)', 'rgba(111, 66, 193, 0.2)')
-    );
     
-    // Fungsi untuk memperbarui data pada grafik
-    function updateChart(chart, newData) {
-        // Tambahkan label waktu baru
-        chart.data.labels.push(new Date().toLocaleTimeString());
-        // Tambahkan data sensor baru
+    // Inisialisasi Chart
+    const suhuChart = new Chart(document.getElementById('suhuChart').getContext('2d'), createChartConfig('rgba(253, 126, 20, 1)', 'rgba(253, 126, 20, 0.2)'));
+    const phChart = new Chart(document.getElementById('phChart').getContext('2d'), createChartConfig('rgba(13, 110, 253, 1)', 'rgba(13, 110, 253, 0.2)'));
+    const kekeruhanChart = new Chart(document.getElementById('kekeruhanChart').getContext('2d'), createChartConfig('rgba(111, 66, 193, 1)', 'rgba(111, 66, 193, 0.2)'));
+    
+    function addDataToChart(chart, label, newData) {
+        chart.data.labels.push(label);
         chart.data.datasets[0].data.push(newData);
-
-        // Jika data melebihi batas, hapus data terlama
         if (chart.data.labels.length > MAX_DATA_POINTS) {
             chart.data.labels.shift();
             chart.data.datasets[0].data.shift();
         }
-
-        // Perbarui grafik tanpa animasi agar terlihat real-time
-        chart.update('none');
+        chart.update('none'); // 'none' untuk animasi yang lebih halus saat live update
     }
 
+    // =========================================================================
+    // PERUBAHAN: FUNGSI BARU UNTUK MENGAMBIL DATA AWAL DARI DATABASE
+    // =========================================================================
+    async function initializeCharts() {
+        try {
+            const response = await fetch("{{ route('monitoring.initial_data') }}");
+            if (!response.ok) {
+                 throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const initialData = await response.json();
+
+            if (initialData && initialData.length > 0) {
+                // Isi grafik dengan data historis
+                initialData.forEach(log => {
+                    suhuChart.data.labels.push(log.label);
+                    suhuChart.data.datasets[0].data.push(log.suhu);
+
+                    phChart.data.labels.push(log.label);
+                    phChart.data.datasets[0].data.push(log.ph);
+
+                    kekeruhanChart.data.labels.push(log.label);
+                    kekeruhanChart.data.datasets[0].data.push(log.kekeruhan);
+                });
+
+                // Update semua grafik sekaligus
+                suhuChart.update();
+                phChart.update();
+                kekeruhanChart.update();
+
+                // Ambil data paling akhir untuk ditampilkan di card
+                const latestLog = initialData[initialData.length - 1];
+                document.getElementById('Suhu-current-value').textContent = parseFloat(latestLog.suhu).toFixed(1);
+                document.getElementById('pH-current-value').textContent = parseFloat(latestLog.ph).toFixed(1);
+                document.getElementById('Kekeruhan-current-value').textContent = parseFloat(latestLog.kekeruhan).toFixed(1);
+                
+                // Analisis kualitas air berdasarkan data terakhir
+                const kualitas = analisisKualitasAir(latestLog.suhu, latestLog.ph, latestLog.kekeruhan);
+                kualitasValue.textContent = kualitas.status;
+                kualitasValue.style.color = kualitas.color;
+                kualitasDeskripsi.textContent = kualitas.deskripsi;
+                kualitasIconContainer.className = 'stat-icon ' + kualitas.iconClass;
+                kualitasIconContainer.innerHTML = '<i class="bi bi-shield-check"></i>';
+            } else {
+                // Jika tidak ada data awal, kosongkan teks "Memuat..."
+                document.getElementById('Suhu-current-value').textContent = '--';
+                document.getElementById('pH-current-value').textContent = '--';
+                document.getElementById('Kekeruhan-current-value').textContent = '--';
+            }
+
+        } catch (error) {
+            console.error("Gagal mengambil data awal:", error);
+            // Tampilkan pesan error atau nilai default jika fetch gagal
+            document.getElementById('Suhu-current-value').textContent = 'Error';
+            document.getElementById('pH-current-value').textContent = 'Error';
+            document.getElementById('Kekeruhan-current-value').textContent = 'Error';
+        }
+    }
+    
     // --- LISTENER FIREBASE (DIMODIFIKASI) ---
     const dataRef = ref(database, 'Sensor');
     statusBadge.classList.add('bg-warning');
 
     onValue(dataRef, (snapshot) => {
-        statusBadge.textContent = 'Connected';
-        statusBadge.classList.remove('bg-warning');
-        statusBadge.classList.add('bg-success');
+        if (statusBadge.textContent !== 'Connected') {
+            statusBadge.textContent = 'Connected';
+            statusBadge.classList.remove('bg-warning');
+            statusBadge.classList.add('bg-success');
+        }
         
         const newData = snapshot.val();
         if (!newData) return;
@@ -401,28 +434,28 @@
                 flashUpdate(cardElement);
 
                 if (key === 'PompaIsi' || key === 'PompaBuang') {
+                    // Logika aktuator (tidak berubah)
                     const valueElement = document.getElementById(`${key}-value`);
                     const isAktif = parseInt(currentValueRaw) === 1;
                     valueElement.textContent = isAktif ? "Aktif" : "Mati";
                     valueElement.style.color = isAktif ? '#198754' : '#dc3545';
-                } 
-                else { // Logika untuk sensor dengan grafik
+                } else {
                     sensorDataChanged = true;
                     const currentValue = parseFloat(currentValueRaw);
+                    const newLabel = new Date().toLocaleTimeString();
                     
-                    // PERUBAHAN: Panggil fungsi updateChart sesuai dengan sensornya
                     switch(key) {
                         case 'Suhu':
                             document.getElementById('Suhu-current-value').textContent = currentValue.toFixed(1);
-                            updateChart(suhuChart, currentValue);
+                            addDataToChart(suhuChart, newLabel, currentValue);
                             break;
                         case 'pH':
                             document.getElementById('pH-current-value').textContent = currentValue.toFixed(1);
-                            updateChart(phChart, currentValue);
+                            addDataToChart(phChart, newLabel, currentValue);
                             break;
                         case 'Kekeruhan':
                             document.getElementById('Kekeruhan-current-value').textContent = currentValue.toFixed(1);
-                            updateChart(kekeruhanChart, currentValue);
+                            addDataToChart(kekeruhanChart, newLabel, currentValue);
                             break;
                     }
                 }
@@ -431,7 +464,7 @@
         }
 
         if (sensorDataChanged) {
-            // --- Bagian 1: Ambil data & Update UI Kartu Kualitas Air (Ini sudah benar) ---
+            // ... (Logika analisis kualitas dan logging tidak berubah)
             flashUpdate(kualitasCard);
             const suhu = parseFloat(newData.Suhu || previousData.Suhu || 0);
             const ph = parseFloat(newData.pH || previousData.pH || 0);
@@ -447,25 +480,13 @@
             kualitasIconContainer.classList.add(kualitas.iconClass);
             kualitasIconContainer.innerHTML = '<i class="bi bi-shield-check"></i>';
 
-
-            // --- Bagian 2: Logika untuk menyimpan data ke database (INI YANG DITAMBAHKAN) ---
-
-            // Simpan data sensor terakhir yang valid ke dalam objek global.
-            // Ini penting agar data yang dikirim selalu yang paling update.
             latestSensorData = { suhu, ph, kekeruhan };
-
-            // Cek apakah sudah waktunya untuk menyimpan ke database.
             const now = Date.now();
             if (now - lastLogTime > LOG_INTERVAL) {
-                
-                // (Optional) Tambahkan log ini untuk debugging di console browser (F12)
-                console.log('Interval tercapai. Mengirim data ke database:', latestSensorData);
-
-                // Panggil fungsi untuk mengirim data ke server Laravel Anda.
-                logDataToDatabase(latestSensorData);
-                
-                // Reset timer ke waktu saat ini setelah data dikirim.
-                lastLogTime = now;
+                if (latestSensorData.suhu && latestSensorData.ph && latestSensorData.kekeruhan) {
+                    logDataToDatabase(latestSensorData);
+                    lastLogTime = now;
+                }
             }
         }
 
@@ -475,5 +496,9 @@
         statusBadge.classList.add('bg-danger');
         console.error("Firebase connection error:", error);
     });
+
+    // PERUBAHAN: Panggil fungsi untuk mengisi grafik saat halaman pertama kali dimuat
+    document.addEventListener('DOMContentLoaded', initializeCharts);
+
 </script>
 @endpush

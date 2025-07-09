@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\HistoryController;
-use App\Http\Controllers\SensorLogController; // Pastikan ini ditambahkan
+use App\Http\Controllers\SensorLogController; // Pastikan ini ada
 
 /*
 |--------------------------------------------------------------------------
@@ -36,16 +36,22 @@ Route::middleware('auth')->group(function () {
     // --- Route untuk Halaman (Pages) ---
     Route::get('/dashboard', [AuthController::class, 'dashboard'])->name('dashboard');
     Route::get('/dashboard/monitoring', [AuthController::class, 'monitoring'])->name('dashboard.monitoring');
-    
-    // Route untuk halaman history, menggunakan HistoryController yang benar.
     Route::get('/dashboard/history', [HistoryController::class, 'index'])->name('dashboard.history');
 
     
     // --- Route untuk Aksi (Actions) ---
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     
-    // Route untuk menerima data dari JavaScript di halaman monitoring.
-    // Ini PENTING untuk menyimpan data ke database.
-    Route::post('/log-sensor-data', [SensorLogController::class, 'store'])->name('sensor.log.store');
+    // Route untuk MENYIMPAN data dari JavaScript ke database.
+    // Anda menggunakan nama `log-sensor-data`, pastikan di file blade juga sama.
+    Route::post('/sensor/log', [SensorLogController::class, 'store'])->name('sensor.log.store');
+
+    // =========================================================================
+    // ===                 TAMBAHKAN RUTE BARU DI BAWAH INI                    ===
+    // =========================================================================
+    
+    // Route untuk MENGAMBIL data awal (10 terakhir) untuk mengisi grafik.
+    // Ini akan dipanggil oleh fetch() di file monitoring.blade.php.
+    Route::get('/monitoring/initial-data', [SensorLogController::class, 'getInitialData'])->name('monitoring.initial_data');
 
 });
