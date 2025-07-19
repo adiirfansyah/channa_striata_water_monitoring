@@ -134,7 +134,7 @@
                 <div class="position-sticky">
                     <a href="{{ route('dashboard') }}" class="sidebar-brand">
                         <i class="bi bi-droplet-fill"></i>
-                        <span>AquaTrack </span>
+                        <span>CSWM</span>
                     </a>
                     
                     <ul class="nav flex-column nav-flex-column">
